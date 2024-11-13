@@ -1,0 +1,5 @@
+[all]
+192.168.117.132 ansible_user=adrien
+
+[mysql]
+192.168.117.133 ansible_user=dbuser

@@ -1,0 +1,2 @@
+[lab]
+192.168.73.133 ansible_user = unix

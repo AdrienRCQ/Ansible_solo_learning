@@ -1,0 +1,10 @@
+---
+- hosts: mysql
+  vars:
+    mysql_root_password: "{{ vault_mysql_root_password }}"
+
+  tasks:
+    - name: Install MySQL server
+      apt:
+        name: mysql-server
+        state: present

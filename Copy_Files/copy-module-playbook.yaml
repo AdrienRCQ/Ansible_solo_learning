@@ -1,0 +1,28 @@
+- hosts: target
+  tasks:
+    - name: Create directory for portainer agent
+      file:
+        path: /home/adrien/portainer_agent
+        state: directory
+        mode: '0755'
+
+    - name: Copy docker-compose.yml for portainer agent
+      copy:
+        src: ./files/portainer_agent/docker-compose.yml
+        dest: /home/adrien/portainer_agent/docker-compose.yml
+        mode: '0644'
+
+    - name: Create directories for homarr
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /home/adrien/homarr/homarr
+        - /home/adrien/homarr/keycloack
+
+    - name: Copy docker-compose.yml for homarr
+      copy:
+        src: ./files/homarr/docker-compose.yml
+        dest: /home/adrien/homarr/docker-compose.yml
+        mode: '0644'

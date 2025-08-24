@@ -1,0 +1,101 @@
+---
+- name: Renommer proprement les hôtes Linux
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Options
+    manage_hosts: true           # gère /etc/hosts
+    preserve_hostname: true      # neutralise cloud-init qui reforce le hostname
+    reboot_after: false          # redémarrage de la amchine une fois les actions terminées
+
+    # Entrées attendues par hôte (depuis l’inventaire / host_vars)
+    # new_hostname: "web-01"
+    # new_domain: "example.local"   # optionnel; si défini => FQDN = new_hostname.new_domain
+
+  pre_tasks:
+    - name: Vérif que la variable new_hostname est fournie
+      ansible.builtin.assert:
+        that:
+          - new_hostname is defined
+          - new_hostname | length > 0
+        fail_msg: "Définis new_hostname pour chaque hôte (inventaire ou host_vars)."
+
+    - name: Valider le format du hostname (RFC-1123)
+      ansible.builtin.assert:
+        that:
+          - new_hostname is match("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+          - new_hostname | length <= 63
+        fail_msg: "new_hostname doit être en minuscules, chiffres et tirets, ≤63 chars, sans tiret au début/fin."
+
+    - name: Construire le FQDN si un domaine est fourni
+      ansible.builtin.set_fact:
+        target_fqdn: >-
+          {{ (new_hostname ~ '.' ~ new_domain) if (new_domain is defined and new_domain|length > 0) else new_hostname }}
+
+  tasks:
+    - name: (Optionnel) Empêcher cloud-init d’écraser le hostname au reboot
+      ansible.builtin.lineinfile:
+        path: /etc/cloud/cloud.cfg
+        regexp: '^preserve_hostname:'
+        line: 'preserve_hostname: true'
+        create: no
+        backup: yes
+      when:
+        - preserve_hostname
+        - ansible_facts['os_family'] in ['Debian', 'RedHat']
+        - ansible.builtin.stat(path='/etc/cloud/cloud.cfg').stat.exists is defined
+      vars:
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: Définir le hostname (idempotent)
+      ansible.builtin.hostname:
+        name: "{{ target_fqdn }}"
+
+    - name: Mettre à jour /etc/hosts (mapping IP -> FQDN et shortname)
+      when: manage_hosts
+      block:
+        - name: Déterminer l'adresse à utiliser
+          ansible.builtin.set_fact:
+            hosts_ip: >-
+              {{ (ansible_default_ipv4.address
+                  if ansible_default_ipv4 is defined and ansible_default_ipv4.address is defined
+                  else '127.0.1.1') }}
+
+        - name: Assurer l’entrée correcte dans /etc/hosts
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            create: yes
+            backup: yes
+            regexp: '^(?:{{ hosts_ip | regex_escape }}\s+).*'
+            line: "{{ hosts_ip }} {{ target_fqdn }} {{ new_hostname }}"
+            state: present
+
+        # Sur Debian/Ubuntu on aime bien 127.0.1.1 pour le hostname local
+        - name: (Debian/Ubuntu) Ajouter aussi l’entrée 127.0.1.1 -> FQDN/short
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            create: yes
+            backup: yes
+            regexp: '^127\.0\.1\.1\s+'
+            line: "127.0.1.1 {{ target_fqdn }} {{ new_hostname }}"
+            state: present
+          when: ansible_facts['os_family'] == 'Debian'
+
+  post_tasks:
+    - name: Afficher l’ancien et le nouveau hostname
+      ansible.builtin.debug:
+        msg:
+          - "Ancien: {{ ansible_facts['hostname'] }}"
+          - "Nouveau (cible): {{ target_fqdn }}"
+
+    - name: Rebooter si demandé
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: reboot_after
+
+    - name: Attendre le retour SSH (si reboot)
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      when: reboot_after
